@@ -9,6 +9,7 @@ from textual.reactive import reactive
 
 from cockpit.modulos.metas.models import Goal, VALID_PRIORITIES
 from cockpit.modulos.metas.service import GoalService
+from cockpit.modulos.metas.storage import GoalStorage
 
 
 class MetaCard(Static):
