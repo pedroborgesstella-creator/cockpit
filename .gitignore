@@ -1,0 +1,24 @@
+# Ambiente virtual
+.venv/
+venv/
+env/
+*.pyc
+__pycache__/
+
+# Dados do Cockpit (nunca versionar)
+data/
+*.db
+*.json
+
+# Secrets (nunca versionar)
+.env
+.env.local
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Obsidian (config local do vault, não parte do código)
+Vault/Cockpit/.obsidian/
