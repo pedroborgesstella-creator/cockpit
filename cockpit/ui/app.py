@@ -2,31 +2,15 @@
 
 from __future__ import annotations
 
+from rich.text import Text
+
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Footer, Header, Input, Label, Select, Static
-from textual.reactive import reactive
 
 from cockpit.modulos.metas.models import Goal, VALID_PRIORITIES
 from cockpit.modulos.metas.service import GoalService
 from cockpit.modulos.metas.storage import GoalStorage
-
-
-class MetaCard(Static):
-    """Card simples exibindo uma meta."""
-
-    def __init__(self, goal: Goal, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.goal = goal
-        self.update(self._render())
-
-    def _render(self) -> str:
-        status = "✓" if self.goal.concluida else "○"
-        prazo = f" | prazo: {self.goal.prazo}" if self.goal.prazo else ""
-        return f"{status} #{self.goal.id}  {self.goal.titulo}  [prioridade: {self.goal.prioridade}]{prazo}"
-
-    def refresh_view(self) -> None:
-        self.update(self._render())
 
 
 class NovaMetaModal(Static):
@@ -109,7 +93,10 @@ class CockpitApp(App):
         lista = self.query_one("#lista_metas", VerticalScroll)
         lista.remove_children()
         for meta in self.service.listar_metas():
-            lista.mount(MetaCard(meta))
+            status = "✓" if meta.concluida else "○"
+            prazo = f" | prazo: {meta.prazo}" if meta.prazo else ""
+            texto = f"{status} #{meta.id}  {meta.titulo}  [prioridade: {meta.prioridade}]{prazo}"
+            lista.mount(Label(texto))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         botao_id = event.button.id
