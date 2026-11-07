@@ -1,141 +1,222 @@
-"""TUI limpa para o módulo Metas usando Textual."""
+"""TUI rústica estilo hacker/dashboard para o módulo Metas do Cockpit.
+
+Aparência: terminal old-school, cores verde/amarelo em fundo preto,
+box-drawing characters, atualização ao vivo (Live) e menu por teclas.
+"""
 
 from __future__ import annotations
 
+from rich.console import Console
+from rich.live import Live
+from rich.panel import Panel
 from rich.text import Text
 
-from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
-from textual.widgets import Button, Footer, Header, Input, Label, Select, Static
-
-from cockpit.modulos.metas.models import Goal, VALID_PRIORITIES
+from cockpit.modulos.metas.models import VALID_PRIORITIES
 from cockpit.modulos.metas.service import GoalService
 from cockpit.modulos.metas.storage import GoalStorage
 
 
-class NovaMetaModal(Static):
-    """Formulário simples para criar uma nova meta."""
-
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-
-    def compose(self) -> ComposeResult:
-        yield Label("Nova meta")
-        yield Input(placeholder="Título da meta", id="input_titulo")
-        yield Input(placeholder="Descrição (opcional)", id="input_descricao")
-        yield Input(placeholder="Prazo (YYYY-MM-DD, opcional)", id="input_prazo")
-        yield Select(
-            options=[(p.title(), p) for p in sorted(VALID_PRIORITIES)],
-            value="media",
-            id="select_prioridade",
-        )
-        yield Button("Criar", id="btn_criar_meta", variant="primary")
-        yield Button("Cancelar", id="btn_cancelar_meta")
+# Cores estilo terminal hacker
+COLOR_OK = "green"
+COLOR_PEND = "bright_green"
+COLOR_PRIO_ALTA = "bright_red"
+COLOR_PRIO_MEDIA = "bright_yellow"
+COLOR_PRIO_BAIXA = "bright_cyan"
+COLOR_BORDER = "green"
 
 
-class CockpitApp(App):
-    """Aplicação principal do Cockpit — TUI limpa."""
+def _status_char(concluida: bool) -> str:
+    return "[x]" if concluida else "[ ]"
 
-    CSS = """
-    Screen {
-        align: center middle;
-    }
-    #principal {
-        width: 80;
-        height: auto;
-        border: solid $accent;
-        padding: 1 2;
-    }
-    #lista_metas {
-        height: 20;
-        overflow-y: auto;
-        border: solid $surface;
-        padding: 1;
-    }
-    Horizontal {
-        height: auto;
-    }
-    """
+
+def _prio_color(prioridade: str) -> str:
+    return {
+        "alta": COLOR_PRIO_ALTA,
+        "media": COLOR_PRIO_MEDIA,
+        "baixa": COLOR_PRIO_BAIXA,
+    }.get(prioridade, COLOR_PRIO_MEDIA)
+
+
+class CockpitCLI:
+    """Interface de linha de comando estilo dashboard hacker."""
 
     def __init__(self) -> None:
-        super().__init__()
-        service = GoalService(GoalStorage("data/metas.db"))
-        self.service = service
-        self._modal_aberto = False
+        self.console = Console()
+        self.service = GoalService(GoalStorage("data/metas.db"))
+        self.running = True
 
-    def compose(self) -> ComposeResult:
-        yield Header()
-        yield Container(
-            Label("Cockpit — Metas", id="titulo_tela"),
-            Static(id="resumo"),
-            VerticalScroll(id="lista_metas"),
-            Horizontal(
-                Button("Adicionar meta", id="btn_adicionar", variant="primary"),
-                Button("Atualizar lista", id="btn_atualizar"),
-                Button("Sair", id="btn_sair", variant="error"),
-            ),
-            id="principal",
-        )
-        yield Footer()
+    # ------------------------------------------------------------------ #
+    # Renderização do dashboard
+    # ------------------------------------------------------------------ #
+    def render(self) -> Panel:
+        """Constrói o painel visual completo."""
 
-    def on_mount(self) -> None:
-        self.atualizar_lista()
-
-    def atualizar_lista(self) -> None:
+        linhas: list[str] = []
         resumo = self.service.resumo()
-        resumo_text = (
-            f"Total: {resumo['total']}  |  "
-            f"Pendentes: {resumo['pendentes']}  |  "
+        metas = self.service.listar_metas()
+
+        # Cabeçalho
+        linhas.append("═════════════════════════════════════════════════════════════════════")
+        linhas.append("                    COCKPIT PESSOAL — MÓDULO METAS")
+        linhas.append("═════════════════════════════════════════════════════════════════════")
+        linhas.append("")
+
+        # Resumo
+        linhas.append(
+            f"  Total: {resumo['total']}   |   "
+            f"Pendentes: {resumo['pendentes']}   |   "
             f"Concluídas: {resumo['concluidas']}"
         )
-        self.query_one("#resumo", Static).update(resumo_text)
+        linhas.append("")
+        linhas.append("  M E T A S")
+        linhas.append("  ───────────────────────────────────────────────────────────────")
 
-        lista = self.query_one("#lista_metas", VerticalScroll)
-        lista.remove_children()
-        for meta in self.service.listar_metas():
-            status = "✓" if meta.concluida else "○"
-            prazo = f" | prazo: {meta.prazo}" if meta.prazo else ""
-            texto = f"{status} #{meta.id}  {meta.titulo}  [prioridade: {meta.prioridade}]{prazo}"
-            lista.mount(Label(texto))
+        if not metas:
+            linhas.append("  (nenhuma meta cadastrada)")
+        else:
+            for meta in metas:
+                status = _status_char(meta.concluida)
+                prio = meta.prioridade
+                prazo = f"  prazo: {meta.prazo}" if meta.prazo else ""
+                linha = f"  {status}  #{meta.id:03d}  {meta.titulo}   [{prio}]{prazo}"
+                linhas.append(linha)
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        botao_id = event.button.id
-        if botao_id == "btn_adicionar":
-            self.abrir_modal_nova_meta()
-        elif botao_id == "btn_atualizar":
-            self.atualizar_lista()
-        elif botao_id == "btn_sair":
-            self.exit()
-        elif botao_id == "btn_criar_meta":
-            self.criar_meta_do_modal()
-        elif botao_id == "btn_cancelar_meta":
-            self.fechar_modal()
+        linhas.append("")
+        linhas.append("════════════════════════════════════════════════════════════════════")
+        linhas.append("  AÇÕES:")
+        linhas.append("  [1] Criar nova meta")
+        linhas.append("  [2] Marcar como concluída")
+        linhas.append("  [3] Reabrir meta")
+        linhas.append("  [4] Deletar meta")
+        linhas.append("  [5] Atualizar tela")
+        linhas.append("  [0] Sair")
+        linhas.append("════════════════════════════════════════════════════════════════════")
+        linhas.append("")
+        linhas.append("  Digite a opção e pressione Enter:")
 
-    def abrir_modal_nova_meta(self) -> None:
-        if self._modal_aberto:
+        texto = "\n".join(linhas)
+        return Panel(
+            Text(texto, style="green"),
+            border_style="green",
+            title="[bright_green]COCKPIT[/bright_green]",
+            title_align="left",
+        )
+
+    # ------------------------------------------------------------------ #
+    # Loop principal
+    # ------------------------------------------------------------------ #
+    def executar(self) -> None:
+        self.console.clear()
+        with Live(self.render(), console=self.console, refresh_per_second=4) as live:
+            while self.running:
+                live.update(self.render())
+                # Para o Live antes de ler input (evita conflito no terminal)
+                live.stop()
+                try:
+                    opcao = input("> ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    self.running = False
+                    live.start()
+                    break
+
+                if opcao == "0":
+                    self.running = False
+                    live.start()
+                    break
+                elif opcao == "1":
+                    self._criar_meta(live)
+                elif opcao == "2":
+                    self._alterar_status(live, concluir=True)
+                elif opcao == "3":
+                    self._alterar_status(live, concluir=False)
+                elif opcao == "4":
+                    self._deletar_meta(live)
+                elif opcao == "5":
+                    pass  # apenas atualiza o loop
+                else:
+                    self._mensagem(live, "Opção inválida. Tente novamente.")
+                live.start()
+
+        self.console.print("[green]Encerrando Cockpit...[/green]")
+
+    # ------------------------------------------------------------------ #
+    # Ações
+    # ------------------------------------------------------------------ #
+    def _criar_meta(self, live: Live) -> None:
+        live.stop()
+        self.console.print("\n[bright_green]--- NOVA META ---[/bright_green]")
+        titulo = input("Título: ").strip()
+        if not titulo:
+            self._mensagem(live, "Título é obrigatório.")
             return
-        self._modal_aberto = True
-        self.mount(NovaMetaModal(id="modal_nova_meta"))
+        descricao = input("Descrição (opcional): ").strip()
+        prazo = input("Prazo (YYYY-MM-DD, opcional): ").strip() or None
+        print("Prioridades: baixa, media, alta")
+        prioridade = input("Prioridade [media]: ").strip() or "media"
 
-    def fechar_modal(self) -> None:
         try:
-            self.query_one("#modal_nova_meta").remove()
-        except Exception:
-            pass
-        self._modal_aberto = False
-
-    def criar_meta_do_modal(self) -> None:
-        try:
-            titulo = self.query_one("#input_titulo", Input).value
-            descricao = self.query_one("#input_descricao", Input).value
-            prazo = self.query_one("#input_prazo", Input).value or None
-            prioridade = self.query_one("#select_prioridade", Select).value
-            if prioridade == Select.BLANK:
-                prioridade = "media"
-            self.service.criar_meta(titulo=titulo, descricao=descricao, prazo=prazo, prioridade=prioridade)
+            self.service.criar_meta(
+                titulo=titulo,
+                descricao=descricao,
+                prazo=prazo,
+                prioridade=prioridade,
+            )
         except ValueError as exc:
-            self.notify(str(exc), severity="error", timeout=3)
+            self._mensagem(live, str(exc))
             return
-        self.fechar_modal()
-        self.atualizar_lista()
-        self.notify("Meta criada com sucesso!", severity="information", timeout=2)
+
+        self._mensagem(live, "Meta criada com sucesso!")
+
+    def _alterar_status(self, live: Live, concluir: bool) -> None:
+        live.stop()
+        acao = "CONCLUIR" if concluir else "REABRIR"
+        self.console.print(f"\n[bright_green]--- {acao} META ---[/bright_green]")
+        try:
+            goal_id = int(input("ID da meta: ").strip())
+        except ValueError:
+            self._mensagem(live, "ID inválido.")
+            return
+
+        if concluir:
+            resultado = self.service.concluir_meta(goal_id)
+        else:
+            resultado = self.service.reabrir_meta(goal_id)
+
+        if resultado is None:
+            self._mensagem(live, "Meta não encontrada.")
+        else:
+            status_txt = "concluída" if concluir else "reaberta"
+            self._mensagem(live, f"Meta #{goal_id} {status_txt}!")
+
+    def _deletar_meta(self, live: Live) -> None:
+        live.stop()
+        self.console.print("\n[bright_red]--- DELETAR META ---[/bright_red]")
+        try:
+            goal_id = int(input("ID da meta: ").strip())
+        except ValueError:
+            self._mensagem(live, "ID inválido.")
+            return
+
+        confirmacao = input(f"Confirma deletar a meta #{goal_id}? (s/N): ").strip().lower()
+        if confirmacao != "s":
+            self._mensagem(live, "Operação cancelada.")
+            return
+
+        if self.service.deletar_meta(goal_id):
+            self._mensagem(live, f"Meta #{goal_id} deletada.")
+        else:
+            self._mensagem(live, "Meta não encontrada.")
+
+    def _mensagem(self, live: Live, texto: str) -> None:
+        self.console.print(f"\n[bright_yellow]>{texto}[/bright_yellow]")
+        input("\nPressione Enter para continuar...")
+        live.start()
+
+
+def main() -> None:
+    app = CockpitCLI()
+    app.executar()
+
+
+if __name__ == "__main__":
+    main()
